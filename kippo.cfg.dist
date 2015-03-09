@@ -182,6 +182,21 @@ interact_port = 5123
 #password = secret
 #port = 3306
 
+# MongoDB logging module
+#
+# Database setup for this module is supplied in doc/mongodb/create.js
+#
+# To enable this module, remove the comments below, including the
+# [database_mongodb] line.
+
+#[database_mongodb]
+#server = 127.0.0.1
+#port = 27017
+#username = kippo
+#password = kippo_pass
+#database = kippo
+#collection = log
+
 # XMPP Logging
 #
 # Log to an xmpp server.
