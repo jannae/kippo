@@ -21,7 +21,6 @@ from twisted.conch.ssh.common import NS, getNS
 
 import ConfigParser
 
-import utils
 import fs
 import sshserver
 import auth
@@ -49,7 +48,6 @@ class HoneyPotSSHUserAuthServer(userauth.SSHUserAuthServer):
             return
         if not data or not len(data.strip()):
             return
-        data = '\r\n'.join(data.splitlines() )
         self.transport.sendPacket(
             userauth.MSG_USERAUTH_BANNER, NS(data) + NS('en'))
         self.bannerSent = True
@@ -57,6 +55,25 @@ class HoneyPotSSHUserAuthServer(userauth.SSHUserAuthServer):
     def ssh_USERAUTH_REQUEST(self, packet):
         self.sendBanner()
         return userauth.SSHUserAuthServer.ssh_USERAUTH_REQUEST(self, packet)
+
+    # Overridden to pass src_ip to auth.UsernamePasswordIP
+    def auth_password(self, packet):
+        password = getNS(packet[1:])[0]
+        src_ip = self.transport.transport.getPeer().host
+        c = auth.UsernamePasswordIP(self.user, password, src_ip)
+        return self.portal.login(c, None, conchinterfaces.IConchUser).addErrback(
+                                                        self._ebPassword)
+
+    # Overridden to pass src_ip to auth.PluggableAuthenticationModulesIP
+    def auth_keyboard_interactive(self, packet):
+        if self._pamDeferred is not None:
+            self.transport.sendDisconnect(
+                    transport.DISCONNECT_PROTOCOL_ERROR,
+                    "only one keyboard interactive attempt at a time")
+            return defer.fail(error.IgnoreAuthentication())
+        src_ip = self.transport.transport.getPeer().host
+        c = auth.PluggableAuthenticationModulesIP(self.user, self._pamConv, src_ip)
+        return self.portal.login(c, None, conchinterfaces.IConchUser)
 
 # As implemented by Kojoney
 class HoneyPotSSHFactory(factory.SSHFactory):
@@ -69,6 +86,8 @@ class HoneyPotSSHFactory(factory.SSHFactory):
     def logDispatch(self, *msg, **args):
         for dblog in self.dbloggers:
             dblog.logDispatch(*msg, **args)
+        for output in self.output_plugins:
+            output.logDispatch(*msg, **args)
 
     def __init__(self):
         cfg = config()
@@ -99,6 +118,27 @@ class HoneyPotSSHFactory(factory.SSHFactory):
                 globals(), locals(), ['dblog']).DBLogger(lcfg)
             log.startLoggingWithObserver(dblogger.emit, setStdout=False)
             self.dbloggers.append(dblogger)
+
+        # load new output modules
+        self.output_plugins = [];
+        for x in cfg.sections():
+             if not x.startswith('output_'):
+                 continue
+             engine = x.split('_')[1]
+             output = 'output_' + engine
+             lcfg = ConfigParser.ConfigParser()
+             lcfg.add_section(output)
+             for i in cfg.options(x):
+                 lcfg.set(output, i, cfg.get(x, i))
+             lcfg.add_section('honeypot')
+             for i in cfg.options('honeypot'):
+                 lcfg.set('honeypot', i, cfg.get('honeypot', i))
+             log.msg( 'Loading output engine: %s' % (engine,) )
+             output = __import__(
+             'kippo.output.%s' % (engine,),
+             globals(), locals(), ['output']).Output(lcfg)
+             log.startLoggingWithObserver(output.emit, setStdout=False)
+             self.output_plugins.append(output)
 
     def buildProtocol(self, addr):
         """
@@ -162,14 +202,9 @@ class HoneyPotTransport(sshserver.KippoSSHServerTransport):
     """
 
     def connectionMade(self):
-        self.logintime = time.time()
         self.transportId = uuid.uuid4().hex[:8]
         self.interactors = []
 
-        #log.msg( 'New connection: %s:%s (%s:%s) [session: %d]' % \
-        #    (self.transport.getPeer().host, self.transport.getPeer().port,
-        #    self.transport.getHost().host, self.transport.getHost().port,
-        #    self.transport.sessionno) )
         log.msg( eventid='KIPP0001',
            format='New connection: %(src_ip)s:%(src_port)s (%(dst_ip)s:%(dst_port)s) [session: %(sessionno)s]',
            src_ip=self.transport.getPeer().host, src_port=self.transport.getPeer().port,
@@ -202,28 +237,21 @@ class HoneyPotTransport(sshserver.KippoSSHServerTransport):
         log.msg('KEXINIT: client supported MAC: %s' % macCS )
         log.msg('KEXINIT: client supported compression: %s' % compCS )
         log.msg('KEXINIT: client supported lang: %s' % langCS )
-        log.msg( eventid='KIPP0009', version=self.otherVersionString, format='Remote SSH version: %(version)s' )
-        return sshserver.KippoSSHServerTransport.ssh_KEXINIT(self, packet)
 
-    def lastlogExit(self):
-        starttime = time.strftime('%a %b %d %H:%M',
-            time.localtime(self.logintime))
-        endtime = time.strftime('%H:%M',
-            time.localtime(time.time()))
-        duration = utils.durationHuman(time.time() - self.logintime)
-        clientIP = self.transport.getPeer().host
-        utils.addToLastlog('root\tpts/0\t%s\t%s - %s (%s)' % \
-            (clientIP, starttime, endtime, duration))
+        log.msg( eventid='KIPP0009', version=self.otherVersionString, 
+            kexAlgs=kexAlgs, keyAlgs=keyAlgs, encCS=encCS, macCS=macCS,
+            compCS=compCS, format='Remote SSH version: %(version)s' )
+
+        return sshserver.KippoSSHServerTransport.ssh_KEXINIT(self, packet)
 
     # this seems to be the only reliable place of catching lost connection
     def connectionLost(self, reason):
-        log.msg( "Connection Lost in SSH Transport" )
         for i in self.interactors:
             i.sessionClosed()
         if self.transport.sessionno in self.factory.sessions:
             del self.factory.sessions[self.transport.sessionno]
-        self.lastlogExit()
         sshserver.KippoSSHServerTransport.connectionLost(self, reason)
+        log.msg( eventid='KIPP0011', format='Connection lost')
 
 class HoneyPotSSHSession(session.SSHSession):
 
@@ -311,7 +339,6 @@ class HoneyPotAvatar(avatar.ConchUser):
                 'exec_enabled not enabled in configuration file!')
             return
 
-        log.msg( 'exec command: "%s"' % cmd )
         serverProtocol = protocol.LoggingServerProtocol(
             protocol.HoneyPotExecProtocol, self, self.env, cmd)
         self.protocol = serverProtocol
@@ -479,12 +506,12 @@ class KippoSFTPServer:
 
     def _getAttrs(self, s):
         return {
-            "size" : s.st_size,
-            "uid" : s.st_uid,
-            "gid" : s.st_gid,
-            "permissions" : s.st_mode,
-            "atime" : int(s.st_atime),
-            "mtime" : int(s.st_mtime)
+            "size": s.st_size,
+            "uid": s.st_uid,
+            "gid": s.st_gid,
+            "permissions": s.st_mode,
+            "atime": int(s.st_atime),
+            "mtime": int(s.st_mtime)
         }
 
     def gotVersion(self, otherVersion, extData):
