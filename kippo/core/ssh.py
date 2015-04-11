@@ -279,6 +279,14 @@ class HoneyPotSSHSession(session.SSHSession):
     def closed(self):
         session.SSHSession.closed(self)
 
+    # utility function to request to send EOF for this session
+    def sendEOF(self):
+        self.conn.sendEOF(self)
+
+    # utility function to request to send close for this session
+    def sendClose(self):
+        self.conn.sendClose(self)
+
     def loseConnection(self):
         self.conn.sendRequest(self, 'exit-status', "\x00"*4)
         session.SSHSession.loseConnection(self)
@@ -455,7 +463,7 @@ class KippoSFTPFile:
         self.bytes_written += len(data)
 
     def getAttrs(self):
-        s = self.server.fs.fstat(self.fd)
+        s = self.server.fs.stat(self.filename)
         return self.server._getAttrs(s)
 
     def setAttrs(self, attrs):
