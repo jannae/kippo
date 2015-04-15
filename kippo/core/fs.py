@@ -4,9 +4,12 @@
 import os
 import time
 import fnmatch
+import hashlib
 import re
 import stat
 import errno
+
+from twisted.python import log
 
 from config import config
 
@@ -37,6 +40,10 @@ class FileNotFound(Exception):
 class HoneyPotFilesystem(object):
     def __init__(self, fs):
         self.fs = fs
+
+        # keep track of open file descriptors
+        self.tempfiles = {}
+        self.filenames = {}
 
         # keep count of new files, so we can have an artificial limit
         self.newcount = 0
@@ -184,7 +191,7 @@ class HoneyPotFilesystem(object):
             return True
         try:
             dir = self.get_path(os.path.dirname(path))
-        except: 
+        except:
             dir = None
         if dir is None:
             return False
@@ -218,23 +225,52 @@ class HoneyPotFilesystem(object):
             realmode = mode & ~(stat.S_IEXEC | stat.S_IXGRP | stat.S_IXOTH)
 
             #log.msg( "fs.open wronly" )
-            # TODO: safeoutfile could contains source IP address
-            safeoutfile = '%s/%s_%s' % \
+            tempfile = '%s/%s_%s' % \
                        (config().get('honeypot', 'download_path'),
                     time.strftime('%Y%m%d%H%M%S'),
                     re.sub('[^A-Za-z0-9]', '_', filename))
             #log.msg( "fs.open file for writing, saving to %s" % safeoutfile )
 
             self.mkfile(filename, 0, 0, 0, stat.S_IFREG | mode)
-            fd = os.open(safeoutfile, openFlags, realmode)
-            self.update_realfile(self.getfile(filename), safeoutfile)
-
+            fd = os.open(tempfile, openFlags, realmode)
+            self.update_realfile(self.getfile(filename), tempfile)
+            self.tempfiles[fd] = tempfile
+            self.filenames[fd] = filename
             return fd
 
         elif openFlags & os.O_RDONLY == os.O_RDONLY:
             return None
 
         return None
+
+    def read(self, fd, size):
+        # this should not be called, we intercept at readChunk
+        raise notImplementedError
+
+    def write(self, fd, string):
+        return os.write(fd, string)
+
+    def close(self, fd):
+        if (fd == None):
+            return True
+        if self.tempfiles[fd] is not None:
+            shasum = hashlib.sha256(open(self.tempfiles[fd], 'rb').read()).hexdigest()
+            log.msg("SHA sum %s" % (shasum))
+            shasumfile = config().get('honeypot', 'download_path') + "/" + shasum
+            if (os.path.exists(shasumfile)):
+                os.remove(self.tempfiles[fd])
+            else:
+                os.rename(self.tempfiles[fd], shasumfile)
+            os.symlink(shasum, self.tempfiles[fd])
+            self.update_realfile( self.getfile(self.filenames[fd]), shasumfile )
+            del self.tempfiles[fd]
+            del self.filenames[fd]
+        return os.close(fd)
+
+    def lseek(self, fd, offset, whence):
+        if (fd == None):
+            return True
+        return os.lseek(fd, offset, whence)
 
     # FIXME mkdir() name conflicts with existing mkdir
     def mkdir2(self, path):
@@ -299,29 +335,11 @@ class HoneyPotFilesystem(object):
         self.get_path(os.path.dirname(newpath)).append(old)
         return
 
-    def read(self, fd, size):
-        # this should not be called, we intercept at readChunk
-        raise notImplementedError
-
-    def write(self, fd, string):
-        return os.write(fd, string)
-
-    def close(self, fd):
-        if (fd == None):
-            return True
-        return os.close(fd)
-
-    def lseek(self, fd, offset, whence):
-        if (fd == None):
-            return True
-        return os.lseek(fd, offset, whence)
-
     def listdir(self, path):
         names = [x[A_NAME] for x in self.get_path(path)]
         return names
 
     def lstat(self, path):
-
         # need to treat / as exception
         if (path == "/"):
             p = { A_TYPE:T_DIR, A_UID:0, A_GID:0, A_SIZE:4096, A_MODE:16877, A_CTIME:time.time() }
