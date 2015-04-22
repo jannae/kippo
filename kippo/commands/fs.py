@@ -1,11 +1,12 @@
 # Copyright (c) 2010 Upi Tamminen <desaster@gmail.com>
 # See the COPYRIGHT file for more information
 
-import os, getopt
-from copy import deepcopy, copy
+import os
+import getopt
+import copy
+
 from kippo.core.honeypot import HoneyPotCommand
 from kippo.core.fs import *
-from twisted.internet import reactor
 
 commands = {}
 
@@ -127,7 +128,7 @@ class command_cp(HoneyPotCommand):
             if not recursive and self.fs.is_dir(resolv(src)):
                 self.writeln("cp: omitting directory `%s'" % (src,))
                 continue
-            s = deepcopy(self.fs.getfile(resolv(src)))
+            s = copy.deepcopy(self.fs.getfile(resolv(src)))
             if is_dir:
                 dir = self.fs.get_path(resolv(dest))
                 outfile = os.path.basename(src)

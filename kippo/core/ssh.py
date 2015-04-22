@@ -12,7 +12,7 @@ from zope.interface import implementer
 import twisted
 from twisted.cred import portal
 from twisted.conch import avatar, interfaces as conchinterfaces
-from twisted.conch.ssh import factory, userauth, connection, keys, session, transport, filetransfer, forwarding
+from twisted.conch.ssh import factory, userauth, keys, session, transport, filetransfer, forwarding
 from twisted.conch.ssh.filetransfer import FXF_READ, FXF_WRITE, FXF_APPEND, FXF_CREAT, FXF_TRUNC, FXF_EXCL
 import twisted.conch.ls
 from twisted.python import log, components
@@ -24,6 +24,7 @@ import ConfigParser
 import fs
 import sshserver
 import auth
+import connection
 import honeypot
 import ssh
 import protocol
@@ -79,7 +80,7 @@ class HoneyPotSSHUserAuthServer(userauth.SSHUserAuthServer):
 class HoneyPotSSHFactory(factory.SSHFactory):
     services = {
         'ssh-userauth': HoneyPotSSHUserAuthServer,
-        'ssh-connection': connection.SSHConnection,
+        'ssh-connection': connection.KippoSSHConnection,
         }
 
     # Special delivery to the loggers to avoid scope problems
@@ -264,7 +265,7 @@ class HoneyPotSSHSession(session.SSHSession):
         value, rest = getNS(rest)
         if rest:
             raise ValueError("Bad data given in env request")
-        log.msg('request_env: %s=%s' % (name, value) )
+        log.msg( eventid='KIPP0013', format='request_env: %(name)s=%(value)s', name=name, value=value )
         return 0
 
     def request_agent(self, data):
@@ -282,6 +283,10 @@ class HoneyPotSSHSession(session.SSHSession):
     # utility function to request to send EOF for this session
     def sendEOF(self):
         self.conn.sendEOF(self)
+
+    def eofReceived(self):
+        log.msg('got eof')
+        self.sendClose()
 
     # utility function to request to send close for this session
     def sendClose(self):

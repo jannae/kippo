@@ -1,14 +1,14 @@
 # Copyright (c) 2009 Upi Tamminen <desaster@gmail.com>
 # See the COPYRIGHT file for more information
 
-import time
 import re
 import random
 import hashlib
 import socket
 
-from kippo.core.honeypot import HoneyPotCommand
 from twisted.internet import reactor
+
+from kippo.core.honeypot import HoneyPotCommand
 
 commands = {}
 
