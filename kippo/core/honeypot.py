@@ -1,7 +1,6 @@
 # Copyright (c) 2009-2014 Upi Tamminen <desaster@gmail.com>
 # See the COPYRIGHT file for more information
 
-import twisted
 import os
 import shlex
 import re
@@ -11,7 +10,6 @@ import pickle
 from twisted.python import log
 
 import fs
-import exceptions
 from config import config
 
 class HoneyPotCommand(object):
@@ -36,12 +34,12 @@ class HoneyPotCommand(object):
         self.honeypot.cmdstack[-1].resume()
 
     def ctrl_c(self):
-        log.msg( 'Received CTRL-C, exiting..' )
+        log.msg('Received CTRL-C, exiting..')
         self.writeln('^C')
         self.exit()
 
     def lineReceived(self, line):
-        log.msg( 'INPUT: %s' % line )
+        log.msg('INPUT: %s' % line)
 
     def resume(self):
         pass
@@ -50,7 +48,7 @@ class HoneyPotCommand(object):
         pass
 
 class HoneyPotShell(object):
-    def __init__(self, protocol, interactive = True):
+    def __init__(self, protocol, interactive=True):
         self.honeypot = protocol
         self.interactive = interactive
         self.showPrompt()
@@ -60,10 +58,10 @@ class HoneyPotShell(object):
             }
 
     def lineReceived(self, line):
-        log.msg( 'CMD: %s' % line )
+        log.msg('CMD: %s' % line)
         line = line[:500]
-        comment = re.compile( '^\s*#' )
-        for i in [x.strip() for x in re.split(';|&&|\n',line.strip())[:10]]:
+        comment = re.compile('^\s*#')
+        for i in [x.strip() for x in re.split(';|&&|\n', line.strip())[:10]]:
             if not len(i):
                 continue
             if comment.match(i):
@@ -129,12 +127,12 @@ class HoneyPotShell(object):
                 rargs.append(arg)
         cmdclass = self.honeypot.getCommand(cmd, envvars['PATH'].split(':'))
         if cmdclass:
-            log.msg( eventid='KIPP0005', input=line, format='Command found: %(input)s' )
+            log.msg(eventid='KIPP0005', input=line, format='Command found: %(input)s')
             #self.honeypot.logDispatch('Command found: %s' % (line,))
             self.honeypot.call_command(cmdclass, *rargs)
         else:
-            log.msg( eventid='KIPP0006',
-                input=line, format='Command not found: %(input)s' )
+            log.msg(eventid='KIPP0006',
+                input=line, format='Command not found: %(input)s')
             #self.honeypot.logDispatch('Command not found: %s' % (line,))
             if len(line):
                 self.honeypot.writeln('bash: %s: command not found' % cmd)

@@ -26,7 +26,6 @@
 # OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF
 # SUCH DAMAGE.
 
-import abc
 import json
 import os
 
@@ -36,18 +35,22 @@ import kippo.core.output
 
 class Output(kippo.core.output.Output):
 
-    def start(self, cfg):
+    def __init__(self, cfg):
+        kippo.core.output.Output.__init__(self, cfg)
         fn = cfg.get('output_jsonlog', 'logfile')
-        dir = os.path.dirname(fn)
+        dirs = os.path.dirname(fn)
         base = os.path.basename(fn)
-        self.outfile = twisted.python.logfile.DailyLogFile( base, dir )
+        self.outfile = twisted.python.logfile.DailyLogFile(base, dirs)
+
+    def start(self):
+        pass
 
     def stop(self):
         self.outfile.close()
 
     def write(self, logentry):
-        json.dump( logentry,  self.outfile )
-        self.outfile.write( '\n' )
+        json.dump(logentry, self.outfile)
+        self.outfile.write('\n')
         self.outfile.flush()
 
 # vim: set sw=4 et:
